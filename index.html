@@ -124,6 +124,26 @@
   li button { flex: 0 0 auto; padding: 6px 12px; background: #E3EEEC; color: var(--teal-dark); font-size: 0.85rem; }
   li button.done, .ghost.done { background: var(--ok); color: #fff; border-color: var(--ok); }
 
+  li.copied { background: #DDF3E4; border-color: #7CC79A; }
+  li.copied button { background: var(--ok); color: #fff; }
+
+  .modal {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: center;
+    padding: 18px; background: rgba(23, 48, 47, 0.55);
+  }
+  .modal[hidden] { display: none; }
+  .modal .box {
+    width: 100%; max-width: 380px; background: var(--panel);
+    border-radius: 14px; padding: 22px 20px;
+  }
+  .modal h3 { margin: 0 0 8px; font-size: 1.2rem; }
+  .modal p { margin: 0 0 18px; color: var(--muted); font-size: 0.95rem; }
+  .modal .btns { display: flex; gap: 10px; justify-content: flex-end; }
+  .modal .btns button { padding: 10px 16px; }
+  .danger { background: #C2255C; color: #fff; }
+  .danger:hover { background: #A51B4B; }
+
   #more { display: none; width: 100%; padding: 12px; background: var(--panel); color: var(--teal-dark); border: 2px solid var(--line); }
   #more.show { display: block; }
   #more:hover { border-color: var(--teal); }
@@ -165,6 +185,17 @@
   <footer>Dots and +tags work as aliases for Gmail (gmail.com / googlemail.com). Your emails stay saved on this device until you press Reset.</footer>
 </main>
 
+<div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="mtitle" hidden>
+  <div class="box">
+    <h3 id="mtitle">Reset everything?</h3>
+    <p>This deletes the email, the number and all generated emails, including the ones marked as copied. You can't undo this.</p>
+    <div class="btns">
+      <button class="ghost" id="cancelReset" type="button">Cancel</button>
+      <button class="danger" id="confirmReset" type="button">Yes, reset</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function () {
   var MAX = 100000, BATCH = 200, KEY = "dotemail:v1";
@@ -189,7 +220,7 @@
     memoryStore = null;
     try { localStorage.removeItem(KEY); } catch (e) {}
   }
-  var state = { email: "", limit: 100, list: [], total: 0 };
+  var state = { email: "", limit: 100, list: [], total: 0, copied: {}, copiedAll: false };
 
   function persist() {
     var ok = save(state);
@@ -298,8 +329,18 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Copy";
+    if (state.copiedAll || (state.copied && state.copied[addr])) {
+      li.classList.add("copied");
+      btn.textContent = "Copied";
+    }
     btn.addEventListener("click", function () {
-      copyText(addr).then(function () { flash(btn, "Copied"); }, function () { flash(btn, "Failed"); });
+      copyText(addr).then(function () {
+        li.classList.add("copied");
+        btn.textContent = "Copied";
+        if (!state.copied) state.copied = {};
+        state.copied[addr] = true;
+        persist();
+      }, function () { flash(btn, "Failed"); });
     });
     li.appendChild(code);
     li.appendChild(btn);
@@ -382,7 +423,9 @@
       limit: want,
       plus: usePlus,
       list: current,
-      total: total
+      total: total,
+      copied: {},
+      copiedAll: false
     };
     renderAll();
     persist();
@@ -392,9 +435,13 @@
       showMsg("Dots are only ignored by Gmail. On " + domain + " these may count as different addresses.", "note");
   }
 
+  var modalEl = $("modal");
+  function openModal() { modalEl.hidden = false; $("cancelReset").focus(); }
+  function closeModal() { modalEl.hidden = true; }
+
   function reset() {
     wipe();
-    state = { email: "", limit: 100, list: [], total: 0 };
+    state = { email: "", limit: 100, list: [], total: 0, copied: {}, copiedAll: false };
     current = [];
     emailEl.value = "";
     limitEl.value = 100;
@@ -406,7 +453,11 @@
 
   /* ---------- events ---------- */
   $("gen").addEventListener("click", generate);
-  $("reset").addEventListener("click", reset);
+  $("reset").addEventListener("click", openModal);
+  $("cancelReset").addEventListener("click", closeModal);
+  $("confirmReset").addEventListener("click", function () { closeModal(); reset(); });
+  modalEl.addEventListener("click", function (e) { if (e.target === modalEl) closeModal(); });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modalEl.hidden) closeModal(); });
   moreEl.addEventListener("click", renderMore);
   emailEl.addEventListener("keydown", function (e) { if (e.key === "Enter") generate(); });
   limitEl.addEventListener("keydown", function (e) { if (e.key === "Enter") generate(); });
@@ -425,7 +476,15 @@
 
   $("copyAll").addEventListener("click", function () {
     var btn = $("copyAll");
-    copyText(current.join("\n")).then(function () { flash(btn, "Copied"); }, function () { flash(btn, "Failed"); });
+    copyText(current.join("\n")).then(function () {
+      flash(btn, "Copied");
+      state.copiedAll = true;
+      persist();
+      Array.prototype.forEach.call(listEl.querySelectorAll("li"), function (li) {
+        li.classList.add("copied");
+        li.querySelector("button").textContent = "Copied";
+      });
+    }, function () { flash(btn, "Failed"); });
   });
 
   $("download").addEventListener("click", function () {
@@ -443,6 +502,7 @@
   var saved = load();
   if (saved) {
     state = saved;
+    if (!state.copied) state.copied = {};
     emailEl.value = saved.email || "";
     limitEl.value = saved.limit || 100;
     $("plus").checked = saved.plus !== false;
